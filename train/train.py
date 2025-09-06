@@ -51,15 +51,13 @@ if __name__ == "__main__":
         )
         
         for epoch in range(num_epochs):
-
             loop = tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch+1}/{num_epochs}", colour='green')
-
             for batch_index, (imgs, bboxes, labels) in loop:
                 """
                     数据结构：
                         img: torch.tensor: [batch_size, channel, width, height]
-                        bboxes: List: [torch.tensor: [, 4]]
-                        labels: List: [torch.tensor: [one_img_num_gt_anchors]]
+                        bboxes: torch.tensor: [batch_size, n_gt, 4]], (x_min, y_min, x_max, y_max)
+                        labels: torch.tensor: [batch_size, n_gt, 1]]
                 """
                 optimizer.zero_grad()
                 losses = model(imgs, bboxes, labels)

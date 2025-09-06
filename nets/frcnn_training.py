@@ -170,8 +170,8 @@ class FasterRCNNTrainer(nn.Module):
         losses: List[rpn_loc_loss_all, rpn_cls_loss_all, roi_loc_loss_all, roi_cls_loss_all, total_loss]
         anchors_pred: [batch_size, n_sample, 4] (x_min, y_min, x_max, y_max)
         classes_pred: [batch_size, n_sample]
-        anchors_gt: [batch_size, n_sample, 4] (x_min, y_min, x_max, y_max)
-        classes_gt: [batch_size, n_sample]
+        anchors_gt: [batch_size, n_gt, 4] (x_min, y_min, x_max, y_max)
+        classes_gt: [batch_size, n_gt]
     """
     def __init__(
             self, 
@@ -187,6 +187,7 @@ class FasterRCNNTrainer(nn.Module):
         self.feat_stride = feat_stride
         self.rpn_sigma = 1
         self.roi_sigma = 1
+        self.n_classes = num_classes
         self.anchor_target_creator = AnchorTargetCreator()
         self.proposal_target_creator = ProposalTargetCreator()
         self.feat_extra = HarDNetFeatureExtraction()
@@ -227,10 +228,15 @@ class FasterRCNNTrainer(nn.Module):
         return regression_loss
         
     def forward(self, imgs, bboxes, labels, scale = 1):
+        """
+        数据结构：
+            img: torch.tensor: [batch_size, channel, width, height]
+            bboxes: torch.tensor: [batch_size, n_gt, 4]], (x_min, y_min, x_max, y_max)
+            labels: torch.tensor: [batch_size, n_gt, 1]]
+        """
         anchors_pred = []
         classes_pred = []
         classes_score_pred = []
-        anchors_gt = []
         n           = imgs.shape[0]
         img_size    = imgs.shape[2:]
         #   获取公用特征层
@@ -302,7 +308,6 @@ class FasterRCNNTrainer(nn.Module):
             anchors_pred.append(loc2bbox(roi, roi_loc))
             classes_pred.append(torch.argmax(roi_score, dim=1))
             classes_score_pred.append(torch.max(roi_score, dim=1))
-            anchors_gt.append(loc2bbox(roi, gt_roi_loc))
 
             #   分别计算Classifier网络的回归损失和分类损失
             roi_loc_loss = self._fast_rcnn_loc_loss(roi_loc, gt_roi_loc, gt_roi_label.data, self.roi_sigma)
@@ -324,7 +329,7 @@ class FasterRCNNTrainer(nn.Module):
         ]
         losses = losses + [sum(losses)]
 
-        return losses, anchors_pred, classes_pred, classes_score_pred, anchors_gt, classes_gt
+        return losses, anchors_pred, classes_pred, classes_score_pred, bboxes, labels
     
     def eval(self, imgs, bboxes, labels, scale=1):
         eval_loss, anchors_pred, classes_pred, classes_score_pred, anchors_gt, classes_gt = self.forward(imgs, bboxes, labels, scale)
@@ -338,28 +343,194 @@ class FasterRCNNTrainer(nn.Module):
         )
     
     def calculate_metrics(
-            anchors_pred, 
-            classes_pred, 
-            classes_score_pred, 
-            anchors_gt, 
-            classes_gt
+            self,
+            anchors_pred: torch.tensor[int], 
+            classes_pred: torch.tensor[int], 
+            classes_score_pred: torch.tensor[int], 
+            anchors_gt: torch.tensor[int], 
+            classes_gt: torch.tensor[int],
+            iou_threshold: float = 0.5
         ):
         """
         ---
             anchors_pred: [batch_size, n_sample, 4] (x_min, y_min, x_max, y_max)
             classes_pred: [batch_size, n_sample]
             classes_score_pred: [batch_size, n_sample]
-            anchors_gt: [batch_size, n_sample, 4] (x_min, y_min, x_max, y_max)
-            classes_gt: [batch_size, n_sample]
+            anchors_gt: [batch_size, n_gt, 4] (x_min, y_min, x_max, y_max)
+            classes_gt: [batch_size, n_gt]
         """
-        classes_score_pred, classes_score_pred_indices = torch.sort(
-            classes_score_pred, 
-            dim=1
-        )
-        
-        anchors_pred = anchors_pred.view(-1, 4)
-        anchors_gt = anchors_gt.view(-1, 4)
-        anchors_pred_area = torch.zeros_like(classes_pred, )
-        # IoU: [batch_size * n_sample, batch_size * n_sample]
-        iou = bbox_iou(anchors_pred, anchors_gt)
+        # 初始化存储结构
+        results = {
+            'mAP': 0.0,
+            'per_class': {}
+        }
+        class_list = list(range(1, self.n_classes + 1))
+        # 为每个类别初始化存储
+        for class_id in class_list:
+            results['per_class'][class_id] = {
+                'AP': 0.0,             # 平均精度
+                'Recall': 0.0,         # 检出率
+                'FPR': 0.0,            # 误检率
+                'Precision': 0.0,      # 精确率
+                'TP': 0,               # 真正例
+                'FP': 0,               # 假正例
+                'FN': 0,               # 假负例
+                'gt_count': 0,         # 真实框总数
+                'pred_count': 0        # 预测框总数
+            }
+        class_preds, pred_dict, gt_dict = {}, {}, {}
 
+        for i in range(anchors_pred.size(0)):
+            pred_dict[i] = {
+                "bboxes": anchors_pred[i],
+                "scores": classes_score_pred[i],
+                "labels": classes_pred[i]
+            }
+            gt_dict[i] = {
+                "bboxes": anchors_gt[i],
+                "labels": classes_gt[i]
+            }
+
+        # 第一步：遍历所有图像，收集匹配结果
+        all_image_ids = set(gt_dict.keys()) | set(pred_dict.keys())
+        
+        for img_id in all_image_ids:
+            # 获取当前图像的标注和预测
+            gt_ann = gt_dict.get(img_id, {'boxes': [], 'labels': []})
+            pred_ann = pred_dict.get(img_id, {'boxes': [], 'scores': [], 'labels': []})
+            
+            # 按类别组织真实框
+            gt_boxes_by_class = {class_id: [] for class_id in class_list}
+            for box, label in zip(gt_ann['boxes'], gt_ann['labels']):
+                if label in class_list:
+                    gt_boxes_by_class[label].append(box)
+                    results['per_class'][label]['gt_count'] += 1
+            
+            # 按类别组织预测框
+            pred_boxes_by_class = {class_id: [] for class_id in class_list}
+            for box, score, label in zip(pred_ann['boxes'], pred_ann['scores'], pred_ann['labels']):
+                if label in class_list:
+                    pred_boxes_by_class[label].append((box, score))
+                    results['per_class'][label]['pred_count'] += 1
+            
+            # 对每个类别单独处理
+            for class_id in class_list:
+                gt_boxes = gt_boxes_by_class[class_id]
+                pred_boxes = pred_boxes_by_class[class_id]
+                
+                # 如果没有预测框，所有真实框都是FN
+                if len(pred_boxes) == 0:
+                    results['per_class'][class_id]['FN'] += len(gt_boxes)
+                    continue
+                
+                # 如果没有真实框，所有预测框都是FP
+                if len(gt_boxes) == 0:
+                    results['per_class'][class_id]['FP'] += len(pred_boxes)
+                    # 记录FP用于AP计算
+                    for box, score in pred_boxes:
+                        class_preds[class_id].append((score, 0))  # 0表示FP
+                    continue
+                
+                # 按置信度降序排序预测框
+                pred_boxes_sorted = sorted(pred_boxes, key=lambda x: x[1], reverse=True)
+                
+                # 初始化匹配矩阵
+                gt_matched = [False] * len(gt_boxes)
+                pred_matched = [False] * len(pred_boxes_sorted)
+                
+                # 尝试匹配每个预测框
+                for pred_idx, (pred_box, score) in enumerate(pred_boxes_sorted):
+                    best_iou = 0.0
+                    best_gt_idx = -1
+                    
+                    # 寻找最佳匹配的真实框
+                    for gt_idx, gt_box in enumerate(gt_boxes):
+                        if gt_matched[gt_idx]:
+                            continue
+                        
+                        iou = bbox_iou(pred_box, gt_box)
+                        if iou > best_iou:
+                            best_iou = iou
+                            best_gt_idx = gt_idx
+                    
+                    # 检查是否超过IoU阈值
+                    if best_iou >= iou_threshold:
+                        gt_matched[best_gt_idx] = True
+                        pred_matched[pred_idx] = True
+                        class_preds[class_id].append((score, 1))  # 1表示TP
+                    else:
+                        class_preds[class_id].append((score, 0))  # 0表示FP
+                
+                # 统计当前图像的结果
+                results['per_class'][class_id]['TP'] += sum(pred_matched)
+                results['per_class'][class_id]['FP'] += len(pred_matched) - sum(pred_matched)
+                results['per_class'][class_id]['FN'] += len(gt_matched) - sum(gt_matched)
+        
+        # 第二步：计算每个类别的指标
+        aps = []
+        for class_id in class_list:
+            class_data = results['per_class'][class_id]
+            tp = class_data['TP']
+            fp = class_data['FP']
+            fn = class_data['FN']
+            gt_count = class_data['gt_count']
+            pred_count = class_data['pred_count']
+            
+            # 计算检出率（Recall）
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            
+            # 计算误检率（FPR）
+            # 注意：在目标检测中，负样本是无穷的，这里使用近似计算
+            # FPR = FP / (FP + TN) ≈ FP / (所有非目标区域)
+            # 我们使用每张图像的平均预测数作为分母的近似
+            num_images = len(all_image_ids)
+            fpr = fp / (fp + num_images * 100)  # 假设每张图像有100个潜在负样本区域
+            
+            # 计算精确率（Precision）
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            
+            # 计算AP（Average Precision）
+            ap = 0.0
+            pred_records = class_preds[class_id]
+            
+            if pred_records:
+                # 按置信度降序排序
+                pred_records_sorted = sorted(pred_records, key=lambda x: x[0], reverse=True)
+                
+                # 计算累积TP和FP
+                cum_tp = 0
+                cum_fp = 0
+                precisions = []
+                recalls = []
+                
+                for score, is_tp in pred_records_sorted:
+                    cum_tp += is_tp
+                    cum_fp += (1 - is_tp)
+                    
+                    p = cum_tp / (cum_tp + cum_fp) if (cum_tp + cum_fp) > 0 else 0
+                    r = cum_tp / gt_count if gt_count > 0 else 0
+                    
+                    precisions.append(p)
+                    recalls.append(r)
+                
+                # 平滑PR曲线（保证单调递减）
+                for i in range(len(precisions)-2, -1, -1):
+                    precisions[i] = max(precisions[i], precisions[i+1])
+                
+                # 计算AP（PR曲线下面积）
+                ap = 0
+                for i in range(1, len(recalls)):
+                    if recalls[i] != recalls[i-1]:
+                        ap += (recalls[i] - recalls[i-1]) * precisions[i]
+            
+            # 更新结果
+            class_data['Recall'] = recall
+            class_data['FPR'] = fpr
+            class_data['Precision'] = precision
+            class_data['AP'] = ap
+            aps.append(ap)
+        
+        # 计算mAP（所有类别AP的平均）
+        results['mAP'] = sum(aps) / len(aps) if aps else 0.0
+        
+        return results

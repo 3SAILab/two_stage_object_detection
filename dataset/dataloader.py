@@ -62,6 +62,9 @@ def collate_fn(batch):
         labels.append(classes.to(device))
     
     images = torch.stack(images)
+    bboxes = torch.stack(bboxes)
+    labels = torch.stack(labels)
+    
     return images, bboxes, labels
 
 train_dataset = FRCNNDataSet(mydata["train"], transform)
