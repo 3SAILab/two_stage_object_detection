@@ -3,7 +3,7 @@ from utils.loc_bbox_iou import xywh2xyxy
 from dataset.data_organise import mydata
 from dataset.transform import transform
 from PIL import Image
-import numpy as np
+import platform
 import torch
 import json
 import os
@@ -33,34 +33,22 @@ class FRCNNDataSet(Dataset):
     def __getitem__(self, index):
         data = self.data[index]
         img = Image.open(data["image_path"]).convert("RGB")
+        bboxes = data["bboxes"]
+        labels = data["labels"]
         if self.transform:
-            img = self.transform(img)
-        label = data["label"]
-        return img, label
+            img, target = self.transform(img, {"boxes": torch.tensor(bboxes), "labels": torch.tensor(labels)})
+        bboxes = target['boxes']
+        labels = target['labels']
+        return img, bboxes, labels
 
 def collate_fn(batch):
     images = []
     bboxes = []
     labels = []
-    for img, label in batch:
+    for img, bbox, label in batch:
         images.append(img.to(device))
-
-        if label:
-            # 提取 bboxes 并转换为 [x_min, y_min, x_max, y_max]
-            bbox = [xywh2xyxy(obj[:-1]) for obj in label]
-            # [num_boxes, 4]
-            bbox = torch.tensor(bbox, dtype=torch.float32)  
-            # 提取 classes
-            classes = [obj[-1] for obj in label]
-            # [num_boxes]
-            classes = torch.tensor(classes, dtype=torch.int64)  
-        else:
-            bbox = torch.empty(0, 4, dtype=torch.float32)
-            classes = torch.empty(0, dtype=torch.int64)
-        
         bboxes.append(bbox.to(device))
-        labels.append(classes.to(device))
-    
+        labels.append(label.to(device))
     images = torch.stack(images)
     bboxes = torch.stack(bboxes)
     labels = torch.stack(labels)
@@ -76,10 +64,11 @@ train_dataloader = DataLoader(
     shuffle=True,
     pin_memory=True,
     drop_last=False,
-    persistent_workers=True,
+    persistent_workers=persistent_workers,
     num_workers=num_workers,
     prefetch_factor=prefetch_factor,
-    collate_fn=collate_fn
+    collate_fn=collate_fn,
+    multiprocessing_context="spawn" if platform.system() == "Windows" else None
 )
 
 eval_dataloader = DataLoader(
@@ -91,5 +80,6 @@ eval_dataloader = DataLoader(
     persistent_workers=True,
     num_workers=num_workers,
     prefetch_factor=prefetch_factor,
-    collate_fn=collate_fn
+    collate_fn=collate_fn,
+    multiprocessing_context="spawn" if platform.system() == "Windows" else None
 )

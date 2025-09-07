@@ -1,3 +1,11 @@
 {
-    "data_ratio": 0.001
+    "num_epochs": 2,
+    "lr": 0.001,
+    "train_ratio": 0.0001,
+    "eval_ratio": 0.001,
+    "device": "cuda:0",
+    "num_workers": 12,
+    "prefetch_factor": 8,
+    "persistent_workers": true,
+    "batch_size": 16
 }

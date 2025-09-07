@@ -20,7 +20,8 @@ eval_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data/annot
 with open(config_path, 'r') as f:
     config = json.load(f)
 
-data_ratio = config["data_ratio"]
+train_ratio = config["train_ratio"]
+eval_ratio = config["eval_ratio"]
 
 with open(train_json, 'r') as train:
     train_data = json.load(train)
@@ -43,7 +44,8 @@ def sort_data(data: dict, type: str, data_ratio: int) -> None:
         # 取出第 i 张图片数据
         image = data["images"][i]
         mydata[type][i] = {}
-        mydata[type][i]["label"] = []
+        mydata[type][i]["bboxes"] = []
+        mydata[type][i]["labels"] = []
         mydata[type][i]["image_path"] = os.path.join(f"data/{type}2017", image["file_name"])
         mydata[type][i]["image_id"] = image["id"]
 
@@ -60,7 +62,8 @@ def insert_annotations(data: dict, type: str) -> None:
     # 添加anno数据到mydata: anno -> image_id -> index -> mydata
     for i in range(len(anno)):
         if anno[i]["image_id"] in map_dict:
-            my_data[map_dict[anno[i]["image_id"]]]["label"].append(anno[i]["bbox"] + [anno[i]["category_id"]])
+            my_data[map_dict[anno[i]["image_id"]]]["bboxes"].append(anno[i]["bbox"])
+            my_data[map_dict[anno[i]["image_id"]]]["labels"].append(anno[i]["category_id"])
 
 def category_and_id(train_data: dict, eval_data: dict) -> None:
     """
@@ -80,8 +83,8 @@ def category_and_id(train_data: dict, eval_data: dict) -> None:
         id_2_category[data["id"]] = data["name"]
         classes.add(data["name"])
 
-sort_data(train_data, "train", data_ratio)
-sort_data(eval_data, "eval", data_ratio)
+sort_data(train_data, "train", train_ratio)
+sort_data(eval_data, "eval", eval_ratio)
 
 insert_annotations(train_data, "train")
 insert_annotations(eval_data, "eval")
@@ -90,6 +93,6 @@ category_and_id(train_data, eval_data)
 
 if __name__ == "__main__":
     print("训练集长度：", len(mydata["train"]), "验证集长度：", len(mydata["eval"]))
-    print("category to id: ", category_2_id, "\n")
-    print("id to category: ", id_2_category, "\n")
+    print("训练集json样本: ", json.dumps(mydata["train"], indent=4))
+    print("验证集json样本: ", json.dumps(mydata["eval"], indent=4))
     print("类别数量：", len(classes))

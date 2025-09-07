@@ -176,14 +176,12 @@ class FasterRCNNTrainer(nn.Module):
     def __init__(
             self, 
             mode,
-            optimizer,
             num_classes,
             feat_stride = 16,
             anchor_scales = [8, 16, 32],
             ratios = [0.5, 1, 2],
         ):
         super(FasterRCNNTrainer, self).__init__()
-        self.optimizer = optimizer
         self.feat_stride = feat_stride
         self.rpn_sigma = 1
         self.roi_sigma = 1
@@ -331,24 +329,33 @@ class FasterRCNNTrainer(nn.Module):
 
         return losses, anchors_pred, classes_pred, classes_score_pred, bboxes, labels
     
-    def eval(self, imgs, bboxes, labels, scale=1):
-        eval_loss, anchors_pred, classes_pred, classes_score_pred, anchors_gt, classes_gt = self.forward(imgs, bboxes, labels, scale)
-        eval_loss = eval_loss[-1]
-        metrics = self.calculate_metrics(
-            anchors_pred, 
-            classes_pred, 
-            classes_score_pred, 
-            anchors_gt, 
-            classes_gt
-        )
+    def eval_fn(self, eval_dataloader, scale=1, iou_threshold=0.5):
+        self.eval()
+        batch_num, mAP = 0, 0
+        for _, (imgs, bboxes, labels) in eval_dataloader:
+            eval_loss, anchors_pred, classes_pred, classes_score_pred, anchors_gt, classes_gt = self.forward(imgs, bboxes, labels, scale)
+            eval_loss = eval_loss[-1]
+            metrics = self.calculate_metrics(
+                anchors_pred, 
+                classes_pred, 
+                classes_score_pred, 
+                anchors_gt, 
+                classes_gt,
+                iou_threshold=iou_threshold
+            )
+            mAP += metrics["mAP"]
+            batch_num += 1
+        
+        mAP /= batch_num
+        return eval_loss, mAP
     
     def calculate_metrics(
             self,
-            anchors_pred: torch.tensor[int], 
-            classes_pred: torch.tensor[int], 
-            classes_score_pred: torch.tensor[int], 
-            anchors_gt: torch.tensor[int], 
-            classes_gt: torch.tensor[int],
+            anchors_pred: torch.tensor, 
+            classes_pred: torch.tensor, 
+            classes_score_pred: torch.tensor, 
+            anchors_gt: torch.tensor, 
+            classes_gt: torch.tensor,
             iou_threshold: float = 0.5
         ):
         """
