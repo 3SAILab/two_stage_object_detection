@@ -2,6 +2,7 @@ from torch.utils.data import DataLoader, Dataset
 from utils.loc_bbox_iou import xywh2xyxy
 from dataset.data_organise import mydata
 from dataset.transform import transform
+from torchvision import tv_tensors
 from PIL import Image
 import platform
 import torch
@@ -33,13 +34,19 @@ class FRCNNDataSet(Dataset):
     def __getitem__(self, index):
         data = self.data[index]
         img = Image.open(data["image_path"]).convert("RGB")
-        bboxes = data["bboxes"]
         labels = data["labels"]
         if self.transform:
-            img, target = self.transform(img, {"boxes": torch.tensor(bboxes), "labels": torch.tensor(labels)})
-        bboxes = target['boxes']
-        labels = target['labels']
-        return img, bboxes, labels
+            img = tv_tensors.Image(img, dtype=torch.float32, requires_grad=True)
+            bboxes = tv_tensors.BoundingBoxes(
+                data["bboxes"],
+                format=tv_tensors.BoundingBoxFormat.XYXY,
+                canvas_size=img.shape[-2:]
+            )
+            img, bboxes = self.transform(img, {"boxes": torch.tensor(bboxes), "labels": torch.tensor(labels)})
+            return img, bboxes, labels
+        else:
+            bboxes = data["bboxes"]
+            return img, bboxes, labels
 
 def collate_fn(batch):
     images = []
