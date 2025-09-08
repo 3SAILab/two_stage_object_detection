@@ -1,5 +1,4 @@
 import torchvision.transforms.v2 as T
-from PIL import Image
 import torch
 
 transform = T.Compose([
