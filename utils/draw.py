@@ -39,6 +39,13 @@ def plot_training_metrics(
     epoch_list = list(range(1, epoch_num + 1))
     step_list = step_num
     
+    # 创建评估数据对应的epoch列表
+    eval_epochs = []
+    if eval_loss:
+        # 假设评估是每10个epoch进行一次，从epoch 0开始
+        for i in range(len(eval_loss)):
+            eval_epochs.append((i * 10) + 1)  # 转换为1-based indexing
+    
     train_color = '#1f77b4'
     ema_train_color = '#ff7f0e'
     eval_color = '#2ca02c'
@@ -71,25 +78,26 @@ def plot_training_metrics(
     axes[0].set_xticklabels(epoch_labels)
     
     # 绘制评估损失
-    axes[1].plot(
-        epoch_list, 
-        eval_loss, 
-        label='Eval Loss', 
-        marker='o', 
-        color=eval_color, 
-        alpha=0.7, 
-        markersize=4, 
-        linewidth=1
-    )
-    axes[1].plot(
-        epoch_list, 
-        ema_eval_loss, 
-        label='EMA Eval Loss', 
-        marker='s',
-        color=ema_eval_color,
-        linewidth=0.8, 
-        markersize=4
-    )
+    if eval_loss and len(eval_loss) > 0:
+        axes[1].plot(
+            eval_epochs, 
+            eval_loss, 
+            label='Eval Loss', 
+            marker='o', 
+            color=eval_color, 
+            alpha=0.7, 
+            markersize=4, 
+            linewidth=1
+        )
+        axes[1].plot(
+            eval_epochs, 
+            ema_eval_loss, 
+            label='EMA Eval Loss', 
+            marker='s',
+            color=ema_eval_color,
+            linewidth=0.8, 
+            markersize=4
+        )
     axes[1].set_title('Evaluation Loss', fontsize=13, fontweight='bold')
     axes[1].set_xlabel('Epoch', fontsize=11)
     axes[1].set_ylabel('Loss', fontsize=11)
@@ -98,15 +106,16 @@ def plot_training_metrics(
     axes[1].set_facecolor('white')
     
     # 绘制评估准确率
-    axes[2].plot(
-        epoch_list, 
-        eval_mAP, 
-        label='Eval mAP', 
-        color=acc_color, 
-        marker='^', 
-        markersize=6, 
-        linewidth=1.5
-    )
+    if eval_mAP and len(eval_mAP) > 0:
+        axes[2].plot(
+            eval_epochs, 
+            eval_mAP, 
+            label='Eval mAP', 
+            color=acc_color, 
+            marker='^', 
+            markersize=6, 
+            linewidth=1.5
+        )
 
     axes[2].set_title('Evaluation mAP', fontsize=13, fontweight='bold')
     axes[2].set_xlabel('Epoch', fontsize=11)
@@ -117,4 +126,8 @@ def plot_training_metrics(
     axes[2].set_ylim(0, 1)
     
     fig.patch.set_facecolor('white')
-    plt.show()
+    
+    # 保存图片而不是显示（因为使用了Agg后端）
+    plt.savefig('training_metrics.png', dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close()  # 关闭图形以释放内存
+    print("训练指标图表已保存为 training_metrics.png")
