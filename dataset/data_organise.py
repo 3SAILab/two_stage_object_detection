@@ -1,3 +1,4 @@
+from utils.loc_bbox_iou import xywh2xyxy
 import random
 import json
 import os
@@ -9,6 +10,10 @@ category_2_id = {}
 id_2_category = {}
 # 类别查询表
 classes = set()
+# COCO类别ID到连续索引的映射
+coco_id_to_class_index = {}
+class_index_to_coco_id = {}
+class_index = 0
 # 配置文件路径
 config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/config.json")
 # 训练json文件路径
@@ -62,34 +67,43 @@ def insert_annotations(data: dict, type: str) -> None:
     # 添加anno数据到mydata: anno -> image_id -> index -> mydata
     for i in range(len(anno)):
         if anno[i]["image_id"] in map_dict:
-            my_data[map_dict[anno[i]["image_id"]]]["bboxes"].append(anno[i]["bbox"])
-            my_data[map_dict[anno[i]["image_id"]]]["labels"].append(anno[i]["category_id"])
+            my_data[map_dict[anno[i]["image_id"]]]["bboxes"].append(xywh2xyxy(anno[i]["bbox"]))
+            # 将COCO类别ID转换为连续索引
+            coco_category_id = anno[i]["category_id"]
+            if coco_category_id in coco_id_to_class_index:
+                class_idx = coco_id_to_class_index[coco_category_id]
+                my_data[map_dict[anno[i]["image_id"]]]["labels"].append(class_idx)
 
 def category_and_id(train_data: dict, eval_data: dict) -> None:
     """
         组织 类别id 与 类别名称 互查的哈希表, 构建类别查询表
     """
-    train = train_data["categories"]
-    for i in range(len(train)):
-        data = train[i]
-        category_2_id[data["name"]] = data["id"]
-        id_2_category[data["id"]] = data["name"]
-        classes.add(data["name"])
-
-    eval = eval_data["categories"]
-    for i in range(len(eval)):
-        data = eval[i]
-        category_2_id[data["name"]] = data["id"]
-        id_2_category[data["id"]] = data["name"]
-        classes.add(data["name"])
+    global class_index, coco_id_to_class_index, class_index_to_coco_id
+    
+    # 收集所有类别
+    all_categories = {}
+    train_categories = {cat["id"]: cat for cat in train_data["categories"]}
+    eval_categories = {cat["id"]: cat for cat in eval_data["categories"]}
+    all_categories.update(train_categories)
+    all_categories.update(eval_categories)
+    
+    # 为每个COCO类别ID分配连续的索引
+    for coco_id, cat_data in all_categories.items():
+        if coco_id not in coco_id_to_class_index:
+            coco_id_to_class_index[coco_id] = class_index
+            class_index_to_coco_id[class_index] = coco_id
+            category_2_id[cat_data["name"]] = class_index
+            id_2_category[class_index] = cat_data["name"]
+            classes.add(cat_data["name"])
+            class_index += 1
 
 sort_data(train_data, "train", train_ratio)
 sort_data(eval_data, "eval", eval_ratio)
 
+category_and_id(train_data, eval_data)
+
 insert_annotations(train_data, "train")
 insert_annotations(eval_data, "eval")
-
-category_and_id(train_data, eval_data)
 
 if __name__ == "__main__":
     print("训练集长度：", len(mydata["train"]), "验证集长度：", len(mydata["eval"]))
