@@ -4,6 +4,7 @@ from torch import nn
 from torch.nn import functional as F
 from torchvision.ops import nms
 from utils.basic_anchors import enumerate_shifted_anchor, generate_basic_anchor
+from utils.utils import torch_choice
 from utils.loc_bbox_iou import loc2bbox
 
 class ProposalCreator():
@@ -33,7 +34,6 @@ class ProposalCreator():
             n_pre_nms = self.n_test_pre_nms
             n_post_nms = self.n_test_post_nms
 
-        anchor = torch.from_numpy(anchor).type_as(loc)
         # 使用预测偏移量迭代一次anchors, 得到新的anchors, 格式为 (x_min, y_min, x_max, y_max)
         roi = loc2bbox(anchor, loc)
 
@@ -63,8 +63,10 @@ class ProposalCreator():
 
         keep = nms(roi, score, self.nms_iou)
         if len(keep) < n_post_nms:
-            index_extra = np.random.choice(
-                range(len(keep)), 
+            # 将 range 转换为张量
+            keep_indices = torch.arange(len(keep), device=roi.device)
+            index_extra = torch_choice(
+                keep_indices, 
                 size=(n_post_nms - len(keep)), 
                 replace=True
             )
@@ -110,8 +112,6 @@ class RegionProposalNetwork(nn.Module):
             anchor: [1, 12996, 4] - 所有先验框，格式为 (x_min, y_min, x_max, y_max)
         """
         n, _, h, w = x.shape
-        x = F.relu(self.conv1(x))
-        # [b, 512, 37, 37] -> [b, 512, 37, 37]
         rpn_locs = self.loc(x)
         # [b, 512, 37, 37] -> [b, 36, 37, 37]
         rpn_locs = rpn_locs.permute(0, 2, 3, 1).contiguous().view(n, -1, 4)
@@ -127,7 +127,7 @@ class RegionProposalNetwork(nn.Module):
         # [b, 37 * 37 * 9] -> [b, 12321] (假设输入图片为600,600,3)
         # 生成移动后的先验框
         anchor = enumerate_shifted_anchor(
-            np.array(self.anchor_base), # [9, 4]
+            torch.tensor(self.anchor_base), # [9, 4]
             self.feat_stride, # 16
             h, # 37
             w  # 37
@@ -150,7 +150,7 @@ class RegionProposalNetwork(nn.Module):
         # [1, n, 4] -> [b, n, 4]
         roi_indices = torch.cat(roi_indices, dim=0).type_as(x) # [b, n] 所有建议框的索引
         # [1, n] -> [b, n]
-        anchor      = torch.from_numpy(anchor).unsqueeze(0).float().to(x.device) # [1, 12321, 4] 所有的先验anchors, 并转换anchor的type和device与x一致
+        anchor      = anchor.unsqueeze(0).float().to(x.device) # [1, 12321, 4] 所有的先验anchors, 并转换anchor的type和device与x一致
         
         return rpn_locs, rpn_scores, rois, roi_indices, anchor
 
