@@ -34,16 +34,16 @@ class FRCNNDataSet(Dataset):
     def __getitem__(self, index):
         data = self.data[index]
         img = Image.open(data["image_path"]).convert("RGB")
-        labels = data["labels"]
+        labels = torch.tensor(data["labels"], dtype=torch.int32)
         if self.transform:
-            img = tv_tensors.Image(img, dtype=torch.float32, requires_grad=True)
+            img = tv_tensors.Image(img, dtype=torch.float32)
             bboxes = tv_tensors.BoundingBoxes(
                 data["bboxes"],
-                format=tv_tensors.BoundingBoxFormat.XYXY,
+                format="XYXY",
                 canvas_size=img.shape[-2:]
             )
-            img, bboxes = self.transform(img, {"boxes": torch.tensor(bboxes), "labels": torch.tensor(labels)})
-            return img, bboxes, labels
+            result = self.transform({"image": img, "boxes": bboxes})
+            return result["image"], result["boxes"], labels
         else:
             bboxes = data["bboxes"]
             return img, bboxes, labels
@@ -53,12 +53,12 @@ def collate_fn(batch):
     bboxes = []
     labels = []
     for img, bbox, label in batch:
-        images.append(img.to(device))
-        bboxes.append(bbox.to(device))
-        labels.append(label.to(device))
-    images = torch.stack(images)
-    bboxes = torch.stack(bboxes)
-    labels = torch.stack(labels)
+        images.append(img)
+        bboxes.append(bbox)
+        labels.append(label)
+    images = torch.stack(images).to(device).requires_grad_(True)
+    bboxes = torch.stack(bboxes).to(device)
+    labels = torch.stack(labels).to(device)
     
     return images, bboxes, labels
 
