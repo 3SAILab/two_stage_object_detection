@@ -67,25 +67,38 @@ def train(visualization=True):
                     labels: torch.tensor: [batch_size, n_gt, 1]]
             """
             optimizer.zero_grad()
-            losses = model(imgs, bboxes, labels)
-            losses[-1].backward()
-            train_loss.append(losses[-1])
+            model_output = model(imgs, bboxes, labels)
+            losses = model_output[0]  # 损失是返回值的第一个元素
+            total_loss = losses[-1]
+            
+            # 检查损失是否需要梯度
+            if not total_loss.requires_grad:
+                print(f"Warning: total_loss doesn't require grad. Loss value: {total_loss}")
+                continue
+                
+            total_loss.backward()
+            train_loss.append(total_loss.detach().cpu())
             optimizer.step()
         
         if epoch % 10 == 0:
             mAP_05_095 = 0
+            mAP_05 = 0
+            mAP_095 = 0
             
             with torch.inference_mode():
-                for iou_threshold in range(0.5, 1, 0.05):
+                # 使用numpy的arange来处理浮点数范围
+                import numpy as np
+                iou_thresholds = np.arange(0.5, 1.0, 0.05)
+                for iou_threshold in iou_thresholds:
                     val_loss, mAP = model.eval_fn(eval_dataloader, iou_threshold=iou_threshold)
-                    if iou_threshold == 0.5:
+                    if abs(iou_threshold - 0.5) < 1e-6:  # 更好的浮点数比较
                         mAP_05 = mAP
-                    elif iou_threshold == 0.95:
+                    elif abs(iou_threshold - 0.95) < 1e-6:  # 更好的浮点数比较
                         mAP_095 = mAP
                     mAP_05_095 += mAP
 
-            mAP_05_095 /= 10
-            eval_loss.append(val_loss)
+            mAP_05_095 /= len(iou_thresholds)
+            eval_loss.append(val_loss.detach().cpu() if hasattr(val_loss, 'detach') else val_loss)
 
             logging.info(f"eval: mAP_50%: {mAP_05}, mAP_50%_95%: {mAP_05_095}, mAP_95%: {mAP_095}")
 
@@ -108,7 +121,7 @@ def train(visualization=True):
             else:
                 ema_eval_loss.append(update_ema(eval_loss[i], ema_alpha, ema_eval_loss[i-1]))
 
-        step_list = list(range(train_loss))
+        step_list = list(range(len(train_loss)))
 
         # 绘制训练结果图表
         draw_data = {
