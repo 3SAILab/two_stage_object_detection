@@ -3,6 +3,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torchvision.ops import nms
+from train.train import device
 from utils.basic_anchors import enumerate_shifted_anchor, generate_basic_anchor
 from utils.utils import torch_choice
 from utils.loc_bbox_iou import loc2bbox
@@ -108,7 +109,7 @@ class RegionProposalNetwork(nn.Module):
             rpn_locs: [b, 12321, 4] 偏移量预测，格式为 (dx, dy, dw, dh)
             rpn_scores: [b, 12321, 2] - 分类概率预测，格式为 (background, object)
             rois: [b, 600, 4] - 所有建议框位置，格式为 (x_min, y_min, x_max, y_max)
-            roi_indices: [b, 600] - 所有建议框的索引，格式为 (b,i)
+            roi_indices: [b, 600] - 所有建议框的索引
             anchor: [1, 12996, 4] - 所有先验框，格式为 (x_min, y_min, x_max, y_max)
         """
         n, _, h, w = x.shape
@@ -116,7 +117,7 @@ class RegionProposalNetwork(nn.Module):
         # [b, 512, 37, 37] -> [b, 36, 37, 37]
         rpn_locs = rpn_locs.permute(0, 2, 3, 1).contiguous().view(n, -1, 4)
         # [b, 36, 37, 37] -> [b, 37, 37, 36] -> [b, 37 * 37 * 9, 4] -> [b, 12321, 4]
-        rpn_scores = self.score(x)
+        rpn_scores = self.score(x).to(device)
         # [b, 512, 37, 37] -> [b, 18, 37, 37]
         rpn_scores = rpn_scores.permute(0, 2, 3, 1).contiguous().view(n, -1, 2)
         # [b, 18, 37, 37] -> [b, 37, 37, 18] -> [b, 37 * 37 * 9, 2] -> [b, 12321, 2]
@@ -127,11 +128,11 @@ class RegionProposalNetwork(nn.Module):
         # [b, 37 * 37 * 9] -> [b, 12321] (假设输入图片为600,600,3)
         # 生成移动后的先验框
         anchor = enumerate_shifted_anchor(
-            torch.tensor(self.anchor_base), # [9, 4]
+            torch.tensor(self.anchor_base).to(device), # [9, 4]
             self.feat_stride, # 16
             h, # 37
             w  # 37
-        ) # anchor = [37 * 37 * 9, 4]
+        ).to(device) # anchor = [37 * 37 * 9, 4]
         rois = list()
         roi_indices = list()
         for i in range(n):
@@ -140,17 +141,17 @@ class RegionProposalNetwork(nn.Module):
                 rpn_fg_scores[i], # [12321] 这一批次中的第i个图片的所有anchors预测为有物体的概率
                 anchor, # [12321, 4] 所有的先验anchors
                 img_size, # [b, 3, 600, 600] 输入图片的大小
-                scale = scale # 1.0
+                scale=scale
             ) # roi = [n, 4] 这一批次中的第i个图片的所有建议框, training时n为600，测试时n为300
-            batch_index = i * torch.ones((len(roi),)) # [n] 这一批次中的第i个图片所有建议框的索引
+            batch_index = i # 这一批次中的第i个图片所有建议框的索引
             rois.append(roi.unsqueeze(0)) # [1, n, 4] 将这一批次中的第i个图片的所有建议框放入列表
-            roi_indices.append(batch_index.unsqueeze(0)) # [1, n] 将这一批次中的第i个图片所有建议框的索引放入列表
+            roi_indices.append(batch_index) # [1] 将这一批次中的第i个图片所有建议框的索引放入列表
 
-        rois        = torch.cat(rois, dim=0).type_as(x) # [b, n, 4] 所有建议框
+        rois = torch.cat(rois, dim=0).type_as(x) # [b, n, 4] 所有建议框
         # [1, n, 4] -> [b, n, 4]
-        roi_indices = torch.cat(roi_indices, dim=0).type_as(x) # [b, n] 所有建议框的索引
-        # [1, n] -> [b, n]
-        anchor      = anchor.unsqueeze(0).float().to(x.device) # [1, 12321, 4] 所有的先验anchors, 并转换anchor的type和device与x一致
+        roi_indices = torch.tensor(roi_indices).type_as(x) # [b, n] 所有建议框的索引
+        # [1] -> [b]
+        anchor = anchor.unsqueeze(0).float().to(x.device) # [1, 12321, 4] 所有的先验anchors, 并转换anchor的type和device与x一致
         
         return rpn_locs, rpn_scores, rois, roi_indices, anchor
 
@@ -160,3 +161,5 @@ def normal_init(m, mean, stddev, truncated=False):
     else:
         m.weight.data.normal_(mean, stddev)
         m.bias.data.zero_()
+
+        
