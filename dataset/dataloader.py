@@ -42,8 +42,8 @@ class FRCNNDataSet(Dataset):
                 format="XYXY",
                 canvas_size=img.shape[-2:]
             )
-            result = self.transform({"image": img, "boxes": bboxes})
-            return result["image"], result["boxes"], labels
+            result = self.transform({"image": img, "boxes": bboxes, "labels": labels})
+            return result["image"], result["boxes"], result["labels"]
         else:
             bboxes = data["bboxes"]
             return img, bboxes, labels
@@ -53,13 +53,9 @@ def collate_fn(batch):
     bboxes = []
     labels = []
     for img, bbox, label in batch:
-        images.append(img)
+        images.append(img.requires_grad_(True))
         bboxes.append(bbox)
         labels.append(label)
-    images = torch.stack(images).to(device).requires_grad_(True)
-    bboxes = torch.stack(bboxes).to(device)
-    labels = torch.stack(labels).to(device)
-    
     return images, bboxes, labels
 
 train_dataset = FRCNNDataSet(mydata["train"], transform)
