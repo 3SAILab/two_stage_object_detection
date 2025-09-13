@@ -52,7 +52,7 @@ if __name__ == "__main__":
         [1, 1 / 7],
     ])
     pr = filter_pr(x, 7)
-    ap = compute_ap_coco(pr)
+    ap = compute_ap(pr)
     print("PR Curve (原始):\n", pr)
     precisions = pr[:, 0].clone()
     for i in range(len(precisions) - 2, -1, -1):
