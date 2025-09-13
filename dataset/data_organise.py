@@ -78,6 +78,23 @@ def insert_annotations(data: dict, type: str) -> None:
             # 对labels添加label信息并转换成连续classes_index形式
             my_data[map_dict[anno[i]["image_id"]]]["labels"].append(category_id_to_class_index[anno[i]["category_id"]])
 
+def clean_data(mydata):
+    mydata_copy = {"train" : {}, "eval" : {}}
+    for type in ["train", "eval"]:
+        data_index = 0
+        data = mydata[type]
+        for i in range(len(data)):
+            if len(data[i]["bboxes"]) > 0 and len(data[i]["bboxes"]) == len(data[i]["labels"]):
+                mydata_copy[type][data_index] = {}
+                mydata_copy[type][data_index]["image_path"] = data[i]["image_path"]
+                mydata_copy[type][data_index]["bboxes"] = data[i]["bboxes"]
+                mydata_copy[type][data_index]["labels"] = data[i]["labels"]
+                data_index += 1
+    mydata.clear()
+    mydata = mydata_copy
+    del mydata_copy
+    return mydata
+
 init_category_id_and_class_index()
 
 sort_data(train_data, "train", train_ratio)
@@ -85,6 +102,8 @@ sort_data(eval_data, "eval", eval_ratio)
 
 insert_annotations(train_data, "train")
 insert_annotations(eval_data, "eval")
+
+mydata = clean_data(mydata)
 
 del train_data, eval_data
 
