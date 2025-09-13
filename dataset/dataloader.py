@@ -4,7 +4,6 @@ from dataset.data_organise import mydata
 from dataset.transform import transform
 from torchvision import tv_tensors
 from PIL import Image
-import platform
 import torch
 import json
 import os
@@ -34,7 +33,7 @@ class FRCNNDataSet(Dataset):
     def __getitem__(self, index):
         data = self.data[index]
         img = Image.open(data["image_path"]).convert("RGB")
-        labels = torch.tensor(data["labels"], dtype=torch.int32)
+        labels = torch.tensor(data["labels"], dtype=torch.int64)
         if self.transform:
             img = tv_tensors.Image(img, dtype=torch.float32)
             bboxes = tv_tensors.BoundingBoxes(
@@ -71,7 +70,7 @@ train_dataloader = DataLoader(
     num_workers=num_workers,
     prefetch_factor=prefetch_factor,
     collate_fn=collate_fn,
-    multiprocessing_context="spawn" if platform.system() == "Windows" else None
+    multiprocessing_context="spawn"
 )
 
 eval_dataloader = DataLoader(
@@ -84,5 +83,5 @@ eval_dataloader = DataLoader(
     num_workers=num_workers,
     prefetch_factor=prefetch_factor,
     collate_fn=collate_fn,
-    multiprocessing_context="spawn" if platform.system() == "Windows" else None
+    multiprocessing_context="spawn"
 )
