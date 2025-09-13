@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torchvision.ops import nms
 from torch.nn import functional as F
-from utils.utils import filter_pr, compute_ap_from_pr
+from utils.utils import filter_pr, compute_ap
 from utils.loc_bbox_iou import bbox2loc, bbox_iou, loc2bbox
 from nets.classify import HarNetRoIHead
 from nets.rpn import RegionProposalNetwork
@@ -551,7 +551,7 @@ class FasterRCNNTrainer(nn.Module):
                     pr_match.append([cum_precision, cum_recall])
                 # 提取出 pr 最大值
                 pr_match = filter_pr(torch.tensor(pr_match, dtype=torch.float32), label_2_info[class_id]["boxes_gt"].shape[0])
-                ap = compute_ap_from_pr(pr_match, label_2_info[class_id]["boxes_gt"].shape[0])
+                ap = compute_ap(pr_match, label_2_info[class_id]["boxes_gt"].shape[0])
 
             # 更新结果
             class_data['Recall'] = recall

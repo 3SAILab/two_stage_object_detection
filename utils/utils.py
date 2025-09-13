@@ -1,8 +1,5 @@
-import numpy as np
-import logging
 import random
 import torch
-import os
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -18,33 +15,42 @@ def update_ema(current_value, ema_alpha, last_ema=None):
         return current_value
     return ema_alpha * current_value + (1 - ema_alpha) * last_ema
 
-def show_model_flops_and_params(model):
-    from thop import profile
-    import json
+def filter_pr(x, n_gt):
+    if x.numel() == 0:
+        return torch.zeros(n_gt + 1, 2)
+    recalls = torch.arange(n_gt, -1, -1).float() / n_gt
+    precisions = [x[x[:, 1] >= r - 1e-6, 0].max().item() if (x[:, 1] >= r - 1e-6).any() else 0.0 for r in recalls]
+    return torch.stack([torch.tensor(precisions), recalls], dim=1)
 
-    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/config.json")) as f:
-        config = json.load(f)
-    device = config['device']
+def compute_ap_from_pr(pr_tensor, n_gt):
+    precisions = pr_tensor[:, 0]
+    recalls = pr_tensor[:, 1]
 
-    model.eval()
-    input = torch.randn(1, 3, 224, 224).to(device)
-    flops, params = profile(model, inputs=(input, ), verbose=False)
-    logging.info(f"➡️  FLOPs = {str(flops/1000**3)} G")
-    logging.info(f"➡️  Params = {str(params/1000**2)} M")
-    return flops, params
+    right_recalls = [i / n_gt for i in range(1, n_gt)] + [1.0]
+    left_recalls = [0.0] + [i / n_gt for i in range(1, n_gt)]
 
-def torch_choice(a, size, replace=False):
-    """
-    从 1D tensor `a` 中采样 `size` 个元素
-    - replace=False: 无放回（默认）
-    - replace=True: 有放回
-    """
-    if replace:
-        # 有放回：随机生成索引
-        indices = torch.randint(len(a), (size,), device=a.device)
-    else:
-        # 无放回：随机排列取前 size 个
-        if size > len(a):
-            raise ValueError("Cannot take a larger sample than population when 'replace=False'")
-        indices = torch.randperm(len(a), device=a.device)[:size]
-    return a[indices]
+    ap = 0.0
+    for left_r, right_r in zip(left_recalls, right_recalls):
+        mask = torch.isclose(recalls, torch.tensor(right_r), atol=1e-5)
+        p = precisions[mask][0] if mask.any() else torch.tensor(0.0)
+        ap += (right_r - left_r) * p
+
+    return ap
+
+if __name__ == "__main__":
+    x = torch.tensor([
+        [0.5, 5 / 7],
+        [0.44, 4 / 7],
+        [0.375, 3 / 7],
+        [0.43, 3 / 7],
+        [0.5, 3 / 7],
+        [0.4, 2 / 7],
+        [0.5, 2 / 7],
+        [0.66, 2 / 7],
+        [1, 2 / 7],
+        [1, 1 / 7],
+    ])
+    pr = filter_pr(x, 7)
+    ap = compute_ap_from_pr(pr, 7)
+    print("PR Curve:\n", pr)
+    print(f"AP = {ap:.4f}")
