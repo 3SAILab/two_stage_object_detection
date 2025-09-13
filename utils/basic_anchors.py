@@ -1,12 +1,20 @@
 import torch
+import os
+import json
+
+config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/config.json")
+with open(config_path, "r") as f:
+    config = json.load(f)
+
+device = config['device']
 
 def generate_basic_anchor(base_size=8, ratios=[0.5, 1, 2], anchor_scales=[8, 16, 32]):
     # shape: [3 * 3, 4]
-    anchor_base = torch.zeros((len(ratios) * len(anchor_scales), 4), dtype=torch.float32)
+    anchor_base = torch.zeros((len(ratios) * len(anchor_scales), 4), dtype=torch.float32).to(device)
     for i in range(len(ratios)):
         for j in range(len(anchor_scales)):
-            h = base_size * anchor_scales[j] * torch.sqrt(torch.tensor(ratios[i]))
-            w = base_size * anchor_scales[j] * torch.sqrt(torch.tensor(1. / ratios[i]))
+            h = base_size * anchor_scales[j] * torch.sqrt(torch.tensor(ratios[i]).type_as(anchor_base))
+            w = base_size * anchor_scales[j] * torch.sqrt(torch.tensor(1. / ratios[i]).type_as(anchor_base))
             index = i * len(anchor_scales) + j
             anchor_base[index, 0] = - w / 2.
             anchor_base[index, 1] = - h / 2.
@@ -18,9 +26,9 @@ def generate_basic_anchor(base_size=8, ratios=[0.5, 1, 2], anchor_scales=[8, 16,
 
 def enumerate_shifted_anchor(anchor_base, feat_stride, height, width):
     # 创建 shift_x 和 shift_y，步长为 feat_stride
-    shift_x = torch.arange(0, width * feat_stride, feat_stride, dtype=torch.float32)
-    shift_y = torch.arange(0, height * feat_stride, feat_stride, dtype=torch.float32)
-    shift_x, shift_y = torch.meshgrid(shift_x, shift_y, indexing='xy')  # 注意：Torch 1.10+ 需指定 indexing
+    shift_x = torch.arange(0, width * feat_stride, feat_stride).type_as(anchor_base)
+    shift_y = torch.arange(0, height * feat_stride, feat_stride).type_as(anchor_base)
+    shift_x, shift_y = torch.meshgrid(shift_x, shift_y, indexing='xy')
 
     # 将 shift_x 转换成行向量, shift_y 转换成列向量, 然后各自广播到相同 shape
     # shift_x = [1, 37] -> [37, 37] 其中每一行元素都相同
