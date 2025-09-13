@@ -22,19 +22,20 @@ def filter_pr(x, n_gt):
     precisions = [x[x[:, 1] >= r - 1e-6, 0].max().item() if (x[:, 1] >= r - 1e-6).any() else 0.0 for r in recalls]
     return torch.stack([torch.tensor(precisions), recalls], dim=1)
 
-def compute_ap_from_pr(pr_tensor, n_gt):
-    precisions = pr_tensor[:, 0]
+def compute_ap(pr_tensor):
+    if len(pr_tensor) == 0:
+        return 0.0
+    precisions = pr_tensor[:, 0].clone()
     recalls = pr_tensor[:, 1]
-
-    right_recalls = [i / n_gt for i in range(1, n_gt)] + [1.0]
-    left_recalls = [0.0] + [i / n_gt for i in range(1, n_gt)]
-
+    # 单调化：从右往左传播最大值（recall 降低时 precision 不降低）
+    for i in range(len(precisions) - 2, -1, -1):
+        precisions[i] = max(precisions[i], precisions[i + 1])
+    # 积分：每个区间 [r[i+1], r[i]] 使用 precision[i+1]
     ap = 0.0
-    for left_r, right_r in zip(left_recalls, right_recalls):
-        mask = torch.isclose(recalls, torch.tensor(right_r), atol=1e-5)
-        p = precisions[mask][0] if mask.any() else torch.tensor(0.0)
-        ap += (right_r - left_r) * p
-
+    for i in range(len(precisions) - 1):
+        width = recalls[i] - recalls[i + 1]
+        height = precisions[i + 1]
+        ap += width * height
     return ap
 
 if __name__ == "__main__":
@@ -51,6 +52,10 @@ if __name__ == "__main__":
         [1, 1 / 7],
     ])
     pr = filter_pr(x, 7)
-    ap = compute_ap_from_pr(pr, 7)
-    print("PR Curve:\n", pr)
-    print(f"AP = {ap:.4f}")
+    ap = compute_ap_coco(pr)
+    print("PR Curve (原始):\n", pr)
+    precisions = pr[:, 0].clone()
+    for i in range(len(precisions) - 2, -1, -1):
+        precisions[i] = max(precisions[i], precisions[i + 1])
+    print("单调化后 precision:", precisions.tolist())
+    print(f"COCO AP = {ap:.4f}")
