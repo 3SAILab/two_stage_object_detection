@@ -10,3 +10,8 @@ transform = T.Compose([
     T.ToTensor(),         # 转为 Tensor[C, H, W]
     T.ConvertImageDtype(torch.float32),  # 归一化到 [0, 1]
 ])
+
+eval_transform = T.Compose([
+    T.Resize((600, 600)),
+    T.ToTensor(),
+])
