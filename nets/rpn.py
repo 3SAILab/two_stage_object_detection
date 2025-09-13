@@ -1,12 +1,18 @@
 import numpy as np
 import torch
+import os
+import json
 from torch import nn
 from torch.nn import functional as F
 from torchvision.ops import nms
-from train.train import device
 from utils.basic_anchors import enumerate_shifted_anchor, generate_basic_anchor
-from utils.utils import torch_choice
 from utils.loc_bbox_iou import loc2bbox
+
+config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs/config.json")
+with open(config_path, "r") as f:
+    config = json.load(f)
+
+device = config['device']
 
 class ProposalCreator():
     def __init__(
@@ -28,7 +34,7 @@ class ProposalCreator():
         self.min_size = min_size
 
     def __call__(self, loc, score, anchor, img_size, scale=1.):
-        if self.mode == "training":
+        if self.mode == "train":
             n_pre_nms = self.n_train_pre_nms
             n_post_nms = self.n_train_post_nms
         else:
@@ -39,18 +45,10 @@ class ProposalCreator():
         roi = loc2bbox(anchor, loc)
 
         roi[:, [0, 2]] = torch.clamp(roi[:, [0, 2]], min = 0, max = img_size[1])
-        roi[:, [1, 3]] = torch.clamp(roi[:, [1, 3]], min = 0, max = img_size[0])
+        roi[:, [1, 3]] = torch.clamp(roi[:, [1, 3]], min = 0, max = img_size[2])
         
         min_size = self.min_size * scale
-        keep = torch.where(
-            (
-                (roi[:, 2] - roi[:, 0]) >= min_size
-            ) 
-                & 
-            (
-                (roi[:, 3] - roi[:, 1]) >= min_size
-            )
-        )[0]
+        keep = torch.where(((roi[:, 2] - roi[:, 0]) >= min_size) & ((roi[:, 3] - roi[:, 1]) >= min_size))[0]
 
         roi = roi[keep, :]
         score = score[keep]
@@ -63,15 +61,10 @@ class ProposalCreator():
         score = score[order]
 
         keep = nms(roi, score, self.nms_iou)
+        # 若小于 600 个, 则补全
         if len(keep) < n_post_nms:
-            # 将 range 转换为张量
-            keep_indices = torch.arange(len(keep), device=roi.device)
-            index_extra = torch_choice(
-                keep_indices, 
-                size=(n_post_nms - len(keep)), 
-                replace=True
-            )
-            keep = torch.cat([keep, keep[index_extra]])
+            index_extra = torch.arange((n_post_nms - len(keep))).type_as(keep)
+            keep = torch.cat((keep, index_extra))
         keep = keep[:n_post_nms]
         roi = roi[keep]
         return roi
@@ -100,8 +93,6 @@ class RegionProposalNetwork(nn.Module):
         #   用于对建议框解码并进行非极大抑制
         self.proposal_layer = ProposalCreator(mode)
         #   对FPN的网络部分进行权值初始化
-        normal_init(self.score, 0, 0.01)
-        normal_init(self.loc, 0, 0.01)
 
     def forward(self, x, img_size, scale=1.):
         """
@@ -121,10 +112,10 @@ class RegionProposalNetwork(nn.Module):
         # [b, 512, 37, 37] -> [b, 18, 37, 37]
         rpn_scores = rpn_scores.permute(0, 2, 3, 1).contiguous().view(n, -1, 2)
         # [b, 18, 37, 37] -> [b, 37, 37, 18] -> [b, 37 * 37 * 9, 2] -> [b, 12321, 2]
-        rpn_softmax_scores  = F.softmax(rpn_scores, dim=-1)
-        rpn_fg_scores       = rpn_softmax_scores[:, :, 1].contiguous()
+        rpn_softmax_scores = F.softmax(rpn_scores, dim=-1)
+        rpn_fg_scores = rpn_softmax_scores[:, :, 1].contiguous()
         # [b, 37 * 37 * 9, 2] -> [b, 37 * 37 * 9]
-        rpn_fg_scores       = rpn_fg_scores.view(n, -1)
+        rpn_fg_scores = rpn_fg_scores.view(n, -1)
         # [b, 37 * 37 * 9] -> [b, 12321] (假设输入图片为600,600,3)
         # 生成移动后的先验框
         anchor = enumerate_shifted_anchor(
@@ -143,23 +134,10 @@ class RegionProposalNetwork(nn.Module):
                 img_size, # [b, 3, 600, 600] 输入图片的大小
                 scale=scale
             ) # roi = [n, 4] 这一批次中的第i个图片的所有建议框, training时n为600，测试时n为300
-            batch_index = i # 这一批次中的第i个图片所有建议框的索引
             rois.append(roi.unsqueeze(0)) # [1, n, 4] 将这一批次中的第i个图片的所有建议框放入列表
-            roi_indices.append(batch_index) # [1] 将这一批次中的第i个图片所有建议框的索引放入列表
 
         rois = torch.cat(rois, dim=0).type_as(x) # [b, n, 4] 所有建议框
         # [1, n, 4] -> [b, n, 4]
-        roi_indices = torch.tensor(roi_indices).type_as(x) # [b, n] 所有建议框的索引
-        # [1] -> [b]
         anchor = anchor.unsqueeze(0).float().to(x.device) # [1, 12321, 4] 所有的先验anchors, 并转换anchor的type和device与x一致
-        
-        return rpn_locs, rpn_scores, rois, roi_indices, anchor
 
-def normal_init(m, mean, stddev, truncated=False):
-    if truncated:
-        m.weight.data.normal_().fmod_(2).mul_(stddev).add_(mean)  # not a perfect approximation
-    else:
-        m.weight.data.normal_(mean, stddev)
-        m.bias.data.zero_()
-
-        
+        return rpn_locs, rpn_scores, rois, anchor
