@@ -220,7 +220,3 @@ if __name__ == "__main__":
     print(y.shape)
     classifier = classify(y).to("cuda")
     print(classifier.shape)
-    import sys
-    sys.path.append(r'D:\work')
-    from image_classify.utils.utils import show_model_flops_and_params
-    print(show_model_flops_and_params(model))
