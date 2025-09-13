@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torchvision.ops import nms
 from torch.nn import functional as F
-from utils.utils import filter_pr
+from utils.utils import filter_pr, compute_ap_from_pr
 from utils.loc_bbox_iou import bbox2loc, bbox_iou, loc2bbox
 from nets.classify import HarNetRoIHead
 from nets.rpn import RegionProposalNetwork
@@ -346,10 +346,12 @@ class FasterRCNNTrainer(nn.Module):
     
     def eval_fn(self, eval_dataloader, scale=1, nms_iou_threshold=0.7, map_iou_threshold=0.7):
         self.eval()
-        batch_num, mAP_total = 0, 0
+        batch_num, mAP_total, eval_loss_total = 0, 0, 0
         for _, (imgs, bboxes, labels) in enumerate(eval_dataloader):
             eval_loss, anchors_pred, classes_pred, classes_score_pred, anchors_gt, classes_gt = self.forward(imgs, bboxes, labels, scale)
             eval_loss = eval_loss[-1]
+            eval_loss_total += eval_loss.item() if hasattr(eval_loss, 'item') else eval_loss
+            
             mAP = self.calculate_metrics(
                 anchors_pred.cpu(), 
                 classes_pred.cpu(), 
@@ -359,10 +361,13 @@ class FasterRCNNTrainer(nn.Module):
                 nms_iou_threshold=nms_iou_threshold,
                 map_iou_threshold = map_iou_threshold
             )
-            mAP_total += mAP
+            if mAP:
+                mAP_total += mAP
             batch_num += 1
-        mAP /= batch_num
-        return eval_loss, mAP
+        
+        avg_mAP = mAP_total / batch_num if batch_num > 0 else 0
+        avg_eval_loss = eval_loss_total / batch_num if batch_num > 0 else 0
+        return avg_eval_loss, avg_mAP
     
     def calculate_metrics(
             self,
@@ -545,8 +550,8 @@ class FasterRCNNTrainer(nn.Module):
                     cum_recall = cum_tp / (cum_tp + cum_fn) if (cum_tp + cum_fn) > 0 else 0.0
                     pr_match.append([cum_precision, cum_recall])
                 # 提取出 pr 最大值
-                pr_match = filter_pr(torch.tensor(pr_match, dtype=torch.float32))
-                ap = torch.sum(pr_match[:,0]).item() / torch.numel(label_2_info[class_id]["boxes_gt"][:,0])
+                pr_match = filter_pr(torch.tensor(pr_match, dtype=torch.float32), label_2_info[class_id]["boxes_gt"].shape[0])
+                ap = compute_ap_from_pr(pr_match, label_2_info[class_id]["boxes_gt"].shape[0])
 
             # 更新结果
             class_data['Recall'] = recall
