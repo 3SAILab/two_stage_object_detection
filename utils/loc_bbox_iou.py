@@ -1,10 +1,9 @@
 import torch
-import numpy as np
 from typing import List
 
 def bbox_iou(bbox_a, bbox_b):
     """
-    计算IOU（Torch版本）
+    计算IOU
     ---
     输入:
         bbox_a: Tensor, shape [n_bbox_a, 4], 格式为 (x1, y1, x2, y2)
@@ -32,7 +31,7 @@ def loc2bbox(src_bbox, loc):
         应用loc到bbox并返回迭代后的bbox
     """
     if src_bbox.size()[0] == 0:
-        return torch.zeros((0, 4), dtype=loc.dtype)
+        return torch.zeros((0, 4), dtype=loc.dtype).type_as(src_bbox)
 
     src_width   = torch.unsqueeze(src_bbox[:, 2] - src_bbox[:, 0], -1).type_as(loc) # 预选框
     src_height  = torch.unsqueeze(src_bbox[:, 3] - src_bbox[:, 1], -1).type_as(loc)
@@ -40,10 +39,10 @@ def loc2bbox(src_bbox, loc):
     src_ctr_y   = torch.unsqueeze(src_bbox[:, 1], -1).type_as(loc) + 0.5 * src_height
     # 将 (x_min, y_min, x_max, y_max) 格式转换成 (ax, ay, aw, ah) 格式
 
-    dx          = loc[:, 0::4]
-    dy          = loc[:, 1::4]
-    dw          = loc[:, 2::4]
-    dh          = loc[:, 3::4]
+    dx = loc[:, 0::4]
+    dy = loc[:, 1::4]
+    dw = loc[:, 2::4]
+    dh = loc[:, 3::4]
     # 提取预测回归偏移量 dx, dy, dw, dh
 
     ctr_x = dx * src_width + src_ctr_x
@@ -52,7 +51,7 @@ def loc2bbox(src_bbox, loc):
     h = torch.exp(dh) * src_height
     # 迭代并计算pred_anchor的 (ax, ay, aw, ah) 坐标
 
-    dst_bbox = torch.zeros_like(loc)
+    dst_bbox = torch.zeros_like(loc).type_as(src_bbox)
     dst_bbox[:, 0::4] = ctr_x - 0.5 * w
     dst_bbox[:, 1::4] = ctr_y - 0.5 * h
     dst_bbox[:, 2::4] = ctr_x + 0.5 * w
@@ -96,3 +95,9 @@ def xywh2xyxy(anchor: List[List]) -> List[List]:
     anchor[2] += anchor[0]
     anchor[3] += anchor[1]
     return anchor
+
+if __name__ == "__main__":
+    data1 = torch.tensor([[100, 100, 200, 200]], dtype=torch.float32)
+    data2 = torch.tensor([[150, 150, 250, 250]], dtype=torch.float32)
+    print(bbox_iou(data1, data2))
+    print(loc2bbox(data1, bbox2loc(data1, data2)) == data2)
